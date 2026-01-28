@@ -2,7 +2,7 @@ import string
 from typing import Callable
 
 import constants
-from functions import filters
+from com_excel.functions import filters
 
 
 class Column:

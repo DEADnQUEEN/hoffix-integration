@@ -3,23 +3,22 @@ from argparse import ArgumentTypeError
 from playwright.sync_api import sync_playwright, Page
 from win32com.client import CDispatch
 import win32com.client
-import datetime
 
-import com_wrapp
+import datetime
+import sys
+
+import com_excel.wrap
 import constants, utils
 
-from functions import filters, editors
-import time
-
-import sys
+from com_excel.functions import filters, editors
 
 
 def get_password(wb) -> tuple[str, str]:
     column, row = constants.LOGIN_PASSWORD_FIELD
     row = int(row)
-    sh = com_wrapp.Sheet(
+    sh = com_excel.wrap.Sheet(
         [
-            com_wrapp.Column(column, rename="settings"),
+            com_excel.wrap.Column(column, rename="settings"),
         ],
         wb.Worksheets(constants.SETTING_LIST)
     )
@@ -43,10 +42,12 @@ def auth_hoffix(page: Page, login: str, password: str) -> Page:
 
 
 def get_workers(workbook) -> dict[str, str]:
-    worker_sheet = com_wrapp.Sheet(
+    worker_sheet = com_excel.wrap.Sheet(
         [
-            com_wrapp.Column("A", rename="renamed_for_hoffix"),
-            com_wrapp.Column("C", rename="excel_worker"),
+            com_excel.wrap.Column("A", rename="renamed_for_hoffix", edit_value=[
+                editors.strip()
+            ]),
+            com_excel.wrap.Column("C", rename="excel_worker"),
         ],
         workbook.Worksheets(constants.WORKER_SHEET)
     )
@@ -73,9 +74,9 @@ def get_services(wb, worker_mapping: dict[str, str]):
 
     sheet = wb.Worksheets(constants.SERVICES_SHEET)
 
-    sh = com_wrapp.Sheet(
+    sh = com_excel.wrap.Sheet(
         [
-            com_wrapp.Column(
+            com_excel.wrap.Column(
                 "B",
                 start=11,
                 stop_if_null=False,
@@ -85,14 +86,14 @@ def get_services(wb, worker_mapping: dict[str, str]):
                     editors.convert_date_to_format(constants.HOFFIX_DATE_FORMAT),
                 ]
             ),
-            com_wrapp.Column("E", start=11, stop_if_null=False, rename="order_id"),
-            com_wrapp.Column("Z", start=11, stop_if_null=False, skip_filters=[
+            com_excel.wrap.Column("E", start=11, stop_if_null=False, rename="order_id"),
+            com_excel.wrap.Column("Z", start=11, stop_if_null=False, skip_filters=[
                 filters.is_not_none,
                 filters.is_lowered_string_not_equal('отмена')
             ], rename="worker", edit_value=[
                 worker_mapping_function,
             ]),
-            com_wrapp.Column("O", start=11, rename="values_filter", hidden=True),
+            com_excel.wrap.Column("O", start=11, rename="values_filter", hidden=True),
         ],
         sheet
     )
@@ -119,13 +120,14 @@ def fill_row(page: Page, data) -> dict[str, str]:
     page.goto(format_url(data["order_id"], data["date"]))
     page.wait_for_selector(".el-table__header-wrapper")
 
-    time.sleep(0.05)
-    if page.evaluate('() => {return document.querySelectorAll(".el-table__empty-block").length === 0};'):
-        data['comment'] = "Заказ не найден в Hoffix"
-        data['state'] = "Невыполнено"
-        return data
+    page.wait_for_timeout(50)
+    # if page.evaluate('() => {return document.querySelectorAll(".el-table__empty-block").length === 0};'):
+    #     data['comment'] = "Заказ не найден в Hoffix"
+    #     data['state'] = "Невыполнено"
+    #     return data
+
     try:
-        page.locator(constants.TABLE_ELEMENTS).click(timeout=2_000)
+        page.locator(constants.TABLE_ELEMENTS).click(timeout=3_000)
     except Exception:
         data['comment'] = "Заказ не найден в Hoffix"
         data['state'] = "Невыполнено"
@@ -141,13 +143,13 @@ def fill_row(page: Page, data) -> dict[str, str]:
     utils.get_safe_locator(page, constants.WORKER_SELECT).click()
 
     while not page.evaluate('() => {return document.querySelectorAll("body > div > p.el-select-dropdown__empty").length === 0}'):
-        time.sleep(0.01)
-    time.sleep(0.01)
+        page.wait_for_timeout(10)
+    page.wait_for_timeout(50)
 
     utils.get_safe_locator(page, constants.WORKER_SELECT+"> input")
 
     if not page.evaluate(
-        '(name) => {var found = false; var selector = document.querySelectorAll(".el-select-dropdown__item");for (let i = 0; i < selector.length;i++) {if (selector[i].querySelector("span").textContent.includes(name)){selector[i].click(); found = true;}} return true;}',
+        '(name) => {var found = false; var selector = document.querySelectorAll(".el-select-dropdown__item");for (let i = 0; i < selector.length;i++) {if (selector[i].querySelector("span").textContent.toLowerCase().includes(name.toLowerCase())){selector[i].click(); found = true;}} return found;}',
         data["worker_rename"]
     ):
         data['comment'] = "Исполнитель не найден"
@@ -156,22 +158,23 @@ def fill_row(page: Page, data) -> dict[str, str]:
 
     utils.get_safe_locator(page, constants.SAVE_BUTTON).click()
     while not page.evaluate(constants.WAIT_SCRIPT):
-        time.sleep(0.1)
+        page.wait_for_timeout(10)
 
     data['state'] = "Выполнено"
+
     return data
 
 
 def write_to_excel(wb, data: list[dict[str, str]]) -> None:
     sheet = wb.Worksheets(constants.OUTPUT_LIST)
-    sh = com_wrapp.Sheet(
+    sh = com_excel.wrap.Sheet(
         [
-            com_wrapp.Column("A", rename="datetime"),
-            com_wrapp.Column("B", rename="order_id"),
-            com_wrapp.Column("C", rename="worker_name", stop_if_null=False),
-            com_wrapp.Column("D", rename="worker_rename", stop_if_null=False),
-            com_wrapp.Column("E", rename="state"),
-            com_wrapp.Column("F", stop_if_null=False, rename="comment"),
+            com_excel.wrap.Column("A", rename="datetime"),
+            com_excel.wrap.Column("B", rename="order_id"),
+            com_excel.wrap.Column("C", rename="worker_name", stop_if_null=False),
+            com_excel.wrap.Column("D", rename="worker_rename", stop_if_null=False),
+            com_excel.wrap.Column("E", rename="state"),
+            com_excel.wrap.Column("F", stop_if_null=False, rename="comment"),
         ],
         sheet
     )

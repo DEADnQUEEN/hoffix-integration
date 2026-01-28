@@ -21,3 +21,21 @@ def convert_date_to_format(date_format: str) -> Callable[[datetime.date], str]:
 
     return func
 
+def to_lower(text: str) -> str:
+    return text.lower()
+
+def to_upper(text: str) -> str:
+    return text.upper()
+
+
+def strip(letters: str = None) -> Callable[[str], str]:
+    if letters is None:
+        letters = " "
+
+    def func(text: str) -> str:
+        if not isinstance(text, str):
+            return ""
+
+        return text.strip(letters)
+
+    return func
