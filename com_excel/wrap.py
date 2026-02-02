@@ -150,13 +150,14 @@ class Sheet:
         self.__columns.append(column)
         column.set_sheet(self.__sheet)
 
-    def find_header_column(self, keyword: str, row: int) -> str:
+    def find_header_column(self, keyword: str, row: int, max_checks = 1_000) -> str:
         for index, item in enumerate(self.__sheet.Range(f"A{row}:Z{row}")):
             if item.Value == keyword:
                 return string.ascii_uppercase[index]
 
         letter_indexes = [0]
-        while True:
+        check = 0
+        while check < max_checks:
             for index in range(len(letter_indexes)):
                 if letter_indexes[index] == len(letter_set):
                     letter_indexes[index] = 0
@@ -172,7 +173,9 @@ class Sheet:
                     return f"{group}{string.ascii_uppercase[index]}"
 
             letter_indexes[0] += 1
+            check += 1
 
+        raise Exception("attempts to find header column failed")
 
     def __iter__(self):
         for column in self.__columns:
