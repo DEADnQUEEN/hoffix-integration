@@ -11,6 +11,8 @@ def is_exact_equal(to: any) -> Callable[[any], bool]:
 def is_lowered_string_equal(to: str) -> Callable[[any], bool]:
     to = to.lower()
     def inside_is_lowered(cell_value: str):
+        if not isinstance(cell_value, str):
+            cell_value = str(cell_value)
         return cell_value.lower() == to
     return inside_is_lowered
 
@@ -18,6 +20,8 @@ def is_lowered_string_equal(to: str) -> Callable[[any], bool]:
 def is_lowered_string_not_equal(to: str) -> Callable[[any], bool]:
     to = to.lower()
     def inside_is_lowered(cell_value: str):
+        if not isinstance(cell_value, str):
+            cell_value = str(cell_value)
         return cell_value.lower() != to
     return inside_is_lowered
 

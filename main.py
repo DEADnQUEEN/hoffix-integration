@@ -3,9 +3,9 @@ from argparse import ArgumentTypeError
 from playwright.sync_api import sync_playwright, Page
 from win32com.client import CDispatch
 import win32com.client
-
 import datetime
 import sys
+import traceback
 
 import com_excel.wrap
 import constants, utils
@@ -17,10 +17,10 @@ def get_password(wb) -> tuple[str, str]:
     column, row = constants.LOGIN_PASSWORD_FIELD
     row = int(row)
     sh = com_excel.wrap.Sheet(
+        wb.Worksheets(constants.SETTING_LIST),
         [
             com_excel.wrap.Column(column, rename="settings"),
-        ],
-        wb.Worksheets(constants.SETTING_LIST)
+        ]
     )
 
     login_pair: str = sh.get_value(row, 0)
@@ -43,13 +43,14 @@ def auth_hoffix(page: Page, login: str, password: str) -> Page:
 
 def get_workers(workbook) -> dict[str, str]:
     worker_sheet = com_excel.wrap.Sheet(
+        workbook.Worksheets(constants.WORKER_SHEET),
         [
             com_excel.wrap.Column("A", rename="renamed_for_hoffix", edit_value=[
+                lambda value: str(value),
                 editors.strip()
             ]),
-            com_excel.wrap.Column("C", rename="excel_worker"),
+            com_excel.wrap.Column("C", rename="excel_worker", edit_value=[lambda value: str(value)]),
         ],
-        workbook.Worksheets(constants.WORKER_SHEET)
     )
 
     return {
@@ -75,6 +76,7 @@ def get_services(wb, worker_mapping: dict[str, str]):
     sheet = wb.Worksheets(constants.SERVICES_SHEET)
 
     sh = com_excel.wrap.Sheet(
+        sheet,
         [
             com_excel.wrap.Column(
                 "B",
@@ -87,19 +89,29 @@ def get_services(wb, worker_mapping: dict[str, str]):
                 ]
             ),
             com_excel.wrap.Column("E", start=11, stop_if_null=False, rename="order_id"),
-            com_excel.wrap.Column("Z", start=11, stop_if_null=False, skip_filters=[
-                filters.is_not_none,
-                filters.is_lowered_string_not_equal('отмена')
-            ], rename="worker", edit_value=[
-                worker_mapping_function,
-            ]),
             com_excel.wrap.Column("O", start=11, rename="values_filter", hidden=True),
         ],
-        sheet
+    )
+
+    sh.add_column(
+        com_excel.wrap.Column(
+            sh.find_header_column("Мастер", 10),
+            start=11,
+            stop_if_null=False,
+            skip_filters=[
+                filters.is_not_none,
+                filters.is_lowered_string_not_equal('отмена')
+            ],
+            rename="worker",
+            edit_value=[
+                worker_mapping_function,
+            ]
+        )
     )
 
     for row in sh:
         yield row
+
 
 def format_url(order_id: str, date: str) -> str:
     return f"https://hoffix.hoff.ru/orders?search={order_id}&workDateFrom={date}&workDateTo={date}"
@@ -116,15 +128,12 @@ def parse_row(row: dict[str, str]) -> dict[str, str]:
         "date": row["date"],
     }
 
+
 def fill_row(page: Page, data) -> dict[str, str]:
     page.goto(format_url(data["order_id"], data["date"]))
     page.wait_for_selector(".el-table__header-wrapper")
 
     page.wait_for_timeout(50)
-    # if page.evaluate('() => {return document.querySelectorAll(".el-table__empty-block").length === 0};'):
-    #     data['comment'] = "Заказ не найден в Hoffix"
-    #     data['state'] = "Невыполнено"
-    #     return data
 
     try:
         page.locator(constants.TABLE_ELEMENTS).click(timeout=3_000)
@@ -132,7 +141,6 @@ def fill_row(page: Page, data) -> dict[str, str]:
         data['comment'] = "Заказ не найден в Hoffix"
         data['state'] = "Невыполнено"
         return data
-
 
     if data["worker_rename"] == "":
         data['comment'] = "Не найден исполнитель"
@@ -168,6 +176,7 @@ def fill_row(page: Page, data) -> dict[str, str]:
 def write_to_excel(wb, data: list[dict[str, str]]) -> None:
     sheet = wb.Worksheets(constants.OUTPUT_LIST)
     sh = com_excel.wrap.Sheet(
+        sheet,
         [
             com_excel.wrap.Column("A", rename="datetime"),
             com_excel.wrap.Column("B", rename="order_id"),
@@ -176,7 +185,6 @@ def write_to_excel(wb, data: list[dict[str, str]]) -> None:
             com_excel.wrap.Column("E", rename="state"),
             com_excel.wrap.Column("F", stop_if_null=False, rename="comment"),
         ],
-        sheet
     )
 
     sh.write(
@@ -234,7 +242,7 @@ if __name__ == '__main__':
     try:
         main()
     except Exception as e:
-        print(str(e))
+        print(traceback.format_exc())
         input("Ошибка\npress enter to continue...")
 
         raise e

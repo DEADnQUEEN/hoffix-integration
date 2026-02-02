@@ -22,9 +22,13 @@ def convert_date_to_format(date_format: str) -> Callable[[datetime.date], str]:
     return func
 
 def to_lower(text: str) -> str:
+    if not isinstance(text, str):
+        text = str(text)
     return text.lower()
 
 def to_upper(text: str) -> str:
+    if not isinstance(text, str):
+        text = str(text)
     return text.upper()
 
 

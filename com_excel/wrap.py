@@ -4,6 +4,7 @@ from typing import Callable
 import constants
 from com_excel.functions import filters
 
+letter_set = ["", *string.ascii_uppercase]
 
 class Column:
     @property
@@ -130,14 +131,48 @@ class Column:
 class Sheet:
     def __init__(
             self,
-            columns: list[Column],
-            sheet
+            sheet,
+            columns: list[Column] = None,
     ):
-        self.__columns = columns
+        if sheet is None:
+            raise AttributeError
+
+        self.__columns = []
         self.__sheet = sheet
 
-        for column in self.__columns:
-            column.set_sheet(self.__sheet)
+        if columns is None:
+            return
+
+        for column in columns:
+            self.add_column(column)
+
+    def add_column(self, column: Column):
+        self.__columns.append(column)
+        column.set_sheet(self.__sheet)
+
+    def find_header_column(self, keyword: str, row: int) -> str:
+        for index, item in enumerate(self.__sheet.Range(f"A{row}:Z{row}")):
+            if item.Value == keyword:
+                return string.ascii_uppercase[index]
+
+        letter_indexes = [0]
+        while True:
+            for index in range(len(letter_indexes)):
+                if letter_indexes[index] == len(letter_set):
+                    letter_indexes[index] = 0
+                    if index + 1 == len(letter_indexes):
+                        letter_indexes.append(0)
+                    else:
+                        letter_indexes[index + 1] += 1
+
+            group = "".join([letter_set[letter_indexes[len(letter_indexes) - 1 - index]] for index in range(len(letter_indexes))])
+
+            for index, item in enumerate(self.__sheet.Range(f"{group}A{row}:{group}Z{row}")):
+                if item.Value == keyword:
+                    return f"{group}{string.ascii_uppercase[index]}"
+
+            letter_indexes[0] += 1
+
 
     def __iter__(self):
         for column in self.__columns:
