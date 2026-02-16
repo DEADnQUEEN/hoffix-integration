@@ -1,10 +1,7 @@
 import string
-from typing import Callable
+from typing import Callable, Optional
 
-import constants
 from com_excel.functions import filters
-
-letter_set = ["", *string.ascii_uppercase]
 
 class Column:
     @property
@@ -13,37 +10,50 @@ class Column:
             return self.__column
         return self.__rename
 
+    def change_rename(self, rename: str):
+        self.__rename = rename
+
+    def set_visibility(self, visible: bool):
+        self.hidden = not visible
+
     @rename.setter
     def rename(self, value: str):
-        self.__rename = value
-
+        self.change_rename(value)
 
     @property
     def start(self):
         return self.__start
 
-    def __init__(
-            self,
-            column: str,
-            stop_filters: list[Callable[[any], bool]] = None,
-            skip_filters: list[Callable[[any], bool]] = None,
-            stop_if_null: bool = True,
-            skip_if_null: bool = True,
-            edit_value: list[Callable[[any], any]] = None,
-            start: int = 1,
-            group: int = constants.STEP,
-            rename: str = None,
-            hidden: bool = False,
-    ):
+    def set_stop_filters(self, stop_filters: Optional[list[Callable[[any], bool]]] = None, stop_if_null: bool = True):
         self.__stop_filters = stop_filters or []
         if stop_if_null and filters.is_not_none not in self.__stop_filters:
             self.__stop_filters.append(filters.is_not_none)
 
+    def set_skip_filters(self, skip_filters: Optional[list[Callable[[any], bool]]] = None, skip_if_null: bool = True):
         self.__skip_filters = skip_filters or []
         if skip_if_null and filters.is_not_none not in self.__skip_filters:
             self.__skip_filters.append(filters.is_not_none)
 
-        self.__edit_value = edit_value or []
+    def set_editors(self, edit_value: Optional[list[Callable[[any], bool]]] = None):
+        self.__edit_value: list = edit_value or []
+
+    def __init__(
+            self,
+            column: str,
+            stop_filters: Optional[list[Callable[[any], bool]]] = None,
+            skip_filters: Optional[list[Callable[[any], bool]]] = None,
+            stop_if_null: bool = True,
+            skip_if_null: bool = True,
+            edit_value: Optional[list[Callable[[any], any]]] = None,
+            start: int = 1,
+            group: int = 300,
+            rename: Optional[str] = None,
+            hidden: bool = False,
+    ):
+        self.set_stop_filters(stop_filters, stop_if_null)
+        self.set_skip_filters(skip_filters, skip_if_null)
+
+        self.set_editors(edit_value)
 
         for letter in column:
             if letter not in string.ascii_uppercase:
@@ -55,7 +65,7 @@ class Column:
 
         self.__start = start if start > 1 else 1
         self.__start_from = self.__start
-        self.__group = group if group > 1 else 1
+        self.__group = group if group > 1 else 100
 
         self.__ws = None
         self.__rename = rename
@@ -66,7 +76,7 @@ class Column:
         self.__ws = ws
 
     def __get_range(self):
-        return self.__ws.Range(f"{self.__column}{self.__start}:{self.__column}{self.__group + self.__start}").Cells()
+        return self.__ws.Range(f"{self.__column}{self.__start}:{self.__column}{self.__group + self.__start - 1}").Cells()
 
     def __iter__(self):
         self.__start = self.__start_from
@@ -127,13 +137,39 @@ class Column:
             for value in data
         ]
 
+class IndexColumn(Column):
+    def increase(self, *_, **__) -> int:
+        self.__i += 1
+        return self.__i
+
+    def decrease(self, *_, **__) -> int:
+        self.__i -= 1
+        return self.__i
+
+    def __init__(self, start_from: Optional[int] = None):
+        super().__init__("D")
+        super(IndexColumn, self).set_skip_filters(None, False)
+        super(IndexColumn, self).set_stop_filters(None, False)
+        super(IndexColumn, self).set_editors([self.increase])
+        super(IndexColumn, self).change_rename("index")
+        super(IndexColumn, self).set_visibility(True)
+
+        self.__i = (start_from if start_from is not None and start_from > 0 else 1) - 1
+
+    def write(self, *_, **__):
+        return
 
 class Sheet:
     def __init__(
             self,
+            columns: list[Column],
             sheet,
-            columns: list[Column] = None,
+            index_column: bool = False,
+            start_from: Optional[int] = None
     ):
+        self.__columns = columns
+        self.__sheet = sheet
+
         if sheet is None:
             raise AttributeError
 
@@ -146,36 +182,14 @@ class Sheet:
         for column in columns:
             self.add_column(column)
 
+        self.__index_column = None
+        if index_column:
+            self.__index_column = IndexColumn(start_from)
+            self.add_column(self.__index_column)
+
     def add_column(self, column: Column):
         self.__columns.append(column)
         column.set_sheet(self.__sheet)
-
-    def find_header_column(self, keyword: str, row: int, max_checks = 1_000) -> str:
-        for index, item in enumerate(self.__sheet.Range(f"A{row}:Z{row}")):
-            if item.Value == keyword:
-                return string.ascii_uppercase[index]
-
-        letter_indexes = [0]
-        check = 0
-        while check < max_checks:
-            for index in range(len(letter_indexes)):
-                if letter_indexes[index] == len(letter_set):
-                    letter_indexes[index] = 0
-                    if index + 1 == len(letter_indexes):
-                        letter_indexes.append(0)
-                    else:
-                        letter_indexes[index + 1] += 1
-
-            group = "".join([letter_set[letter_indexes[len(letter_indexes) - 1 - index]] for index in range(len(letter_indexes))])
-
-            for index, item in enumerate(self.__sheet.Range(f"{group}A{row}:{group}Z{row}")):
-                if item.Value == keyword:
-                    return f"{group}{string.ascii_uppercase[index]}"
-
-            letter_indexes[0] += 1
-            check += 1
-
-        raise Exception("attempts to find header column failed")
 
     def __iter__(self):
         for column in self.__columns:

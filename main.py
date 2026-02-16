@@ -1,190 +1,104 @@
-from argparse import ArgumentTypeError
-
-from playwright.sync_api import sync_playwright, Page
-from win32com.client import CDispatch
-import win32com.client
 import datetime
+import json
 import sys
-import traceback
+from typing import Optional
 
+import constants
+import hoffix
 import com_excel.wrap
-import constants, utils
-
-from com_excel.functions import filters, editors
+import win32com.client
 
 
-def get_password(wb) -> tuple[str, str]:
-    column, row = constants.LOGIN_PASSWORD_FIELD
-    row = int(row)
-    sh = com_excel.wrap.Sheet(
-        wb.Worksheets(constants.SETTING_LIST),
-        [
-            com_excel.wrap.Column(column, rename="settings"),
-        ]
-    )
+def edit_values(api: hoffix.HoffixAPI, base_order: dict[str, any], set_values: dict[str, any]) -> dict[str, any]:
+    order: dict[str, any] = {**base_order}
+    for key, value in set_values.items():
+        if key not in order.keys():
+            continue
 
-    login_pair: str = sh.get_value(row, 0)
-    login, password = login_pair.split(":", 1)
+        dataset = constants.FROM_DB_COLLECT.get(key)
+        if dataset is not None:
+            value = api.get_dataset_from_db(*dataset)[value]
 
-    return login, password
+        order[key] = value
 
-
-def auth_hoffix(page: Page, login: str, password: str) -> Page:
-    return utils.auth(
-        page,
-        constants.HOFFIX_LOGIN_URL,
-        constants.LOGIN_PASSWORD_FIELDS_SELECTOR,
-        constants.CONFIRM_LOGIN_SELECTOR,
-        login,
-        password,
-        constants.HOFFIX_MAIN_URL,
-    )
+    return order
 
 
-def get_workers(workbook) -> dict[str, str]:
-    worker_sheet = com_excel.wrap.Sheet(
-        workbook.Worksheets(constants.WORKER_SHEET),
-        [
-            com_excel.wrap.Column("A", rename="renamed_for_hoffix", edit_value=[
-                lambda value: str(value),
-                editors.strip()
-            ]),
-            com_excel.wrap.Column("C", rename="excel_worker", edit_value=[lambda value: str(value)]),
-        ],
-    )
+def remap_put_json(order_data: dict[str, any]):
+    edit_order_data = {}
 
-    return {
-        row["excel_worker"]: row["renamed_for_hoffix"]
-        for row in worker_sheet
+    for key, value in constants.MAPPING_JSON.items():
+        if isinstance(value, str):
+            if not value:
+                edit_order_data[key] = value
+                continue
+            path = iter(value.split("."))
+            field = order_data.get(next(path), None)
+
+            for item in path:
+                if field is None:
+                    break
+                if not isinstance(field, dict):
+                    raise TypeError
+                field = field.get(item)
+
+            if field is None:
+                continue
+        else:
+            field = value
+
+        edit_order_data[key] = field
+
+    return edit_order_data
+
+
+def send_request(api: hoffix.HoffixAPI, data: dict[str, any]) -> Optional[dict[str, any]]:
+    response = {
+        "datetime": datetime.datetime.now().strftime(constants.DATE_FORMAT),
+        "order_id": data["orderServiceNumber"],
+        "worker_rename": data["workerId"],
+        "state": "Не выполнено",
+        "comment": "",
     }
 
+    for skip_field, skip_func in constants.SKIP_FIELDS.items():
+        if skip_field not in data:
+            continue
+        if skip_func(data[skip_field]):
+            return None
 
-def get_workbook():
-    if len(sys.argv) < 2 and not isinstance(sys.argv[1], str):
-        raise ArgumentTypeError("No workbook specified")
+    hoffix_order = api.find_order(data["orderServiceNumber"], data["workDate"])
+    if hoffix_order is None:
+        response["comment"] = "Не найден заказ в Hoffix"
+        return response
 
+    order_id = hoffix_order['visitOrderId']
+
+    hoffix_put_order = remap_put_json(api.get_full_order_data(order_id))
+    updated_data = edit_values(api, hoffix_put_order, data)
+
+    api.set_order_data(order_id, updated_data)
+
+    response['state'] = "Выполнено"
+    return response
+
+
+def write_to_excel(filepath: str, data: list[dict[str, any]]) -> None:
     excel = win32com.client.Dispatch("Excel.Application")
     excel.Visible = True
 
-    return excel.Workbooks.Open(sys.argv[1])
+    wb = excel.Workbooks.Open(filepath)
 
-
-def get_services(wb, worker_mapping: dict[str, str]):
-    def worker_mapping_function(worker: str) -> tuple[str, str]:
-        return worker, worker_mapping.get(worker, "")
-
-    sheet = wb.Worksheets(constants.SERVICES_SHEET)
-
-    sh = com_excel.wrap.Sheet(
-        sheet,
-        [
-            com_excel.wrap.Column(
-                "B",
-                start=11,
-                stop_if_null=False,
-                rename="date",
-                edit_value=[
-                    editors.convert_to_date(constants.EXCEL_DATE_FORMAT),
-                    editors.convert_date_to_format(constants.HOFFIX_DATE_FORMAT),
-                ]
-            ),
-            com_excel.wrap.Column("E", start=11, stop_if_null=False, rename="order_id"),
-            com_excel.wrap.Column("O", start=11, rename="values_filter", hidden=True),
-        ],
-    )
-
-    sh.add_column(
-        com_excel.wrap.Column(
-            sh.find_header_column("Мастер", 10),
-            start=11,
-            stop_if_null=False,
-            skip_filters=[
-                filters.is_not_none,
-                filters.is_lowered_string_not_equal('отмена')
-            ],
-            rename="worker",
-            edit_value=[
-                worker_mapping_function,
-            ]
-        )
-    )
-
-    for row in sh:
-        yield row
-
-
-def format_url(order_id: str, date: str) -> str:
-    return f"https://hoffix.hoff.ru/orders?search={order_id}&workDateFrom={date}&workDateTo={date}"
-
-
-def parse_row(row: dict[str, str]) -> dict[str, str]:
-    return {
-        "order_id": row["order_id"],
-        "datetime": datetime.datetime.now().strftime(constants.OUTPUT_DATE_FORMAT),
-        "worker_name": row["worker"][0],
-        "worker_rename": row["worker"][1],
-        "comment": "",
-        "state": "",
-        "date": row["date"],
-    }
-
-
-def fill_row(page: Page, data) -> dict[str, str]:
-    page.goto(format_url(data["order_id"], data["date"]))
-    page.wait_for_selector(".el-table__header-wrapper")
-
-    page.wait_for_timeout(50)
-
-    try:
-        page.locator(constants.TABLE_ELEMENTS).click(timeout=3_000)
-    except Exception:
-        data['comment'] = "Заказ не найден в Hoffix"
-        data['state'] = "Невыполнено"
-        return data
-
-    if data["worker_rename"] == "":
-        data['comment'] = "Не найден исполнитель"
-        data['state'] = "Невыполнено"
-        return data
-
-    utils.get_safe_locator(page, constants.EDIT_BUTTON).click()
-    utils.get_safe_locator(page, constants.WORKER_SELECT).click()
-
-    while not page.evaluate('() => {return document.querySelectorAll("body > div > p.el-select-dropdown__empty").length === 0}'):
-        page.wait_for_timeout(10)
-    page.wait_for_timeout(50)
-
-    utils.get_safe_locator(page, constants.WORKER_SELECT+"> input")
-
-    if not page.evaluate(
-        '(name) => {var found = false; var selector = document.querySelectorAll(".el-select-dropdown__item");for (let i = 0; i < selector.length;i++) {if (selector[i].querySelector("span").textContent.toLowerCase().includes(name.toLowerCase())){selector[i].click(); found = true;}} return found;}',
-        data["worker_rename"]
-    ):
-        data['comment'] = "Исполнитель не найден"
-        data['state'] = "Невыполнено"
-        return data
-
-    utils.get_safe_locator(page, constants.SAVE_BUTTON).click()
-    while not page.evaluate(constants.WAIT_SCRIPT):
-        page.wait_for_timeout(10)
-
-    data['state'] = "Выполнено"
-
-    return data
-
-
-def write_to_excel(wb, data: list[dict[str, str]]) -> None:
     sheet = wb.Worksheets(constants.OUTPUT_LIST)
     sh = com_excel.wrap.Sheet(
-        sheet,
         [
             com_excel.wrap.Column("A", rename="datetime"),
             com_excel.wrap.Column("B", rename="order_id"),
-            com_excel.wrap.Column("C", rename="worker_name", stop_if_null=False),
             com_excel.wrap.Column("D", rename="worker_rename", stop_if_null=False),
             com_excel.wrap.Column("E", rename="state"),
-            com_excel.wrap.Column("F", stop_if_null=False, rename="comment"),
+            com_excel.wrap.Column("F", rename="comment", stop_if_null=False),
         ],
+        sheet,
     )
 
     sh.write(
@@ -194,55 +108,20 @@ def write_to_excel(wb, data: list[dict[str, str]]) -> None:
 
 
 def main():
-    wb = get_workbook()
-    workers = get_workers(wb)
-    login, password = get_password(wb)
+    if len(sys.argv) < 2:
+        raise TypeError
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
-        page = browser.new_page()
+    excel_json = json.loads(sys.argv[1].replace("\\", "\\\\"))
+    api = hoffix.HoffixAPI(excel_json['auth']['login'], excel_json['auth']['password'])
 
-        for _ in range(constants.ATTEMPTS):
-            try:
-                auth_hoffix(page, login, password)
-                break
-            except Exception:
-                print("timeout to login")
-        else:
-            print("couldn't login. check internet connection or login, password")
-            input("press enter to continue... ")
-            return
+    output = []
 
-        data = []
-        for i, row in enumerate(get_services(wb, workers)):
-            row = parse_row(row)
+    for excel_row in excel_json["orders"]:
+        request = send_request(api, excel_row)
+        if request is not None:
+            output.append(request)
 
-            try:
-                for _ in range(constants.ATTEMPTS):
-                    content = fill_row(page, row)
-                    break
-                else:
-                    row["state"] = "Невыполнено"
-                    row['comment'] = "Ошибка при подключении к Hoffix"
-            except Exception:
-                row["state"] = "Невыполнено"
-                row['comment'] = "Ошибка скрипта"
-
-            data.append(content)
-
-    write_to_excel(wb, data)
-
+    write_to_excel(excel_json['ExcelData']['sourceWorkbook'], output)
 
 if __name__ == '__main__':
-    print(sys.argv)
-
-    if len(sys.argv) < 2:
-        raise ArgumentTypeError("Path not specified")
-
-    try:
-        main()
-    except Exception as e:
-        print(traceback.format_exc())
-        input("Ошибка\npress enter to continue...")
-
-        raise e
+    main()

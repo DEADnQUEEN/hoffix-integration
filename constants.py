@@ -1,27 +1,38 @@
-HOFFIX_LOGIN_URL = "https://hoffix.hoff.ru/login"
-HOFFIX_MAIN_URL = "https://hoffix.hoff.ru/orders"
-CONFIRM_LOGIN_SELECTOR = ".el-button.el-button--primary"
-LOGIN_PASSWORD_FIELDS_SELECTOR = ".el-input__inner"
+LOGIN_JSON = {
+    "grant_type": "password",
+    "client_id": "hoff-web-app-prod",
+    "client_secret": "Th1s0Is2supAS3cr9t",
+    "app_version": "1.16.0.0",
+}
 
-STEP = 300
+# set: get
+# '.' - devider
+MAPPING_JSON = {
+    "number": "number",
+    "serviceId": "service.id",
+    "registryTypeId": "registryType.id",
+    "serviceDetail": "serviceDetail",
+    "workDate": "workDate",
+    "workTime": "workTime",
+    "clientName": "clientName",
+    "clientPhone": "clientPhone",
+    "address": "address",
+    "comment": "comment",
+    "contractorId": "contractor.id",
+    "workerId": "worker.id",
+    "orderStatus": "orderStatus",
+    "workerAssistantIds": [],
+}
 
-WORKER_SHEET = "Список мастеров"
-SERVICES_SHEET = "Services"
+FROM_DB_COLLECT = {
+    "workerId": ("https://back-hoffix.hoff.ru/api/Contractors", "workers", False, lambda data: [{"name": row['fullName'].strip(), "id":  row['id']} for row in data[0]['workers']]),
+    "registryTypeId": ("https://back-hoffix.hoff.ru/api/RegistryTypes?pageNumber=1&pageSize=10000&includeArchived=true", "registry", False)
+}
 
-EXCEL_DATE_FORMAT = "%d.%m.%Y"
-HOFFIX_DATE_FORMAT = "%Y-%m-%d"
-OUTPUT_DATE_FORMAT = "%d-%m-%YT%H:%M:%S"
-
-WORKER_SELECT = "form[class='el-form grid-table'] .grid-table__row:nth-child(2) div:has(> input.el-input__inner)"
-POSSIBLE_SELECT_OPTIONS = "body > .el-select-dropdown.el-popper .el-scrollbar__view.el-select-dropdown__list > .el-select-dropdown__item[style=''], body > .el-select-dropdown.el-popper .el-scrollbar__view.el-select-dropdown__list > .el-select-dropdown__item:not([style])"
-TABLE_ELEMENTS = ".el-table__body > tbody > tr.el-table__row"
-
-EDIT_BUTTON = "#orderBlock > .data-card__header .el-button.el-button--default.el-button--medium:has(span)"
-SAVE_BUTTON = "#orderBlock > .data-card__header .el-button.el-button--primary.el-button--medium:has(span)"
-WAIT_SCRIPT = "() => {return document.querySelectorAll('#orderBlock > .data-card__header .el-button.el-button--primary.el-button--medium.is-loading:has(span)').length === 0;}"
+SKIP_FIELDS = {
+    "workerId": lambda field: field.lower().strip() == "отмена"
+}
 
 OUTPUT_LIST = "Протокол"
-SETTING_LIST = "Настройки"
-LOGIN_PASSWORD_FIELD = "B9"
+DATE_FORMAT = "%d-%m-%Y %H:%M:%S"
 
-ATTEMPTS = 5
