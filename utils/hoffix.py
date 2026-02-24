@@ -1,6 +1,6 @@
 import requests
 import json
-import constants
+from utils import constants
 from typing import Optional, Callable
 
 
@@ -49,6 +49,9 @@ class HoffixAPI:
             f"https://back-hoffix.hoff.ru/api/Orders/{order_id}",
             headers=self.headers,
         )
+
+        order_data.raise_for_status()
+
         return json.loads(order_data.text)['data']
 
     def set_order_data(self, order_id, order_data):
@@ -57,6 +60,8 @@ class HoffixAPI:
             headers=self.headers,
             json=order_data,
         )
+
+        request.raise_for_status()
 
         return json.loads(request.text)
 

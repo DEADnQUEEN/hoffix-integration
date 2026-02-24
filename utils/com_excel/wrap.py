@@ -1,7 +1,7 @@
 import string
 from typing import Callable, Optional
 
-from com_excel.functions import filters
+from utils.com_excel.functions import filters
 
 class Column:
     @property
