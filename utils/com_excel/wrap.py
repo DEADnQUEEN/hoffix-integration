@@ -1,5 +1,5 @@
 import string
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 
 from utils.com_excel.functions import filters
 
@@ -213,9 +213,12 @@ class Sheet:
     def write(
             self,
             start_from: int,
-            data: list[dict[str, any]],
+            data: Union[list[dict[str, any]], dict[str, any]],
             order: list[str] = None
     ):
+        if isinstance(data, dict):
+            data = [data]
+
         order = order if order is not None else [column.rename for column in self.__columns]
 
         columns = {

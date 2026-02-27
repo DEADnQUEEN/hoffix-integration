@@ -5,8 +5,8 @@ import packets.worker.main
 import packets.calls.main
 
 
-packets: dict[str, Callable[[dict[str, any]], None]] = {
-    "worker": packets.worker.main.main,
+packets: dict[str, Callable[[dict[str, Callable]], None]] = {
+    "workers": packets.worker.main.main,
     "calls": packets.calls.main.main,
 }
 
@@ -21,10 +21,12 @@ def main():
 
     packet = excel_json.get("packet")
     if packet is None:
+        print(excel_json)
         raise TypeError
 
     main_packet = packets.get(packet)
     if main_packet is None:
+        print(packet)
         raise TypeError
 
     main_packet(excel_json)

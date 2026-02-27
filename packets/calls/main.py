@@ -1,5 +1,4 @@
 import datetime
-import json
 from typing import Optional, Callable
 import win32com.client
 
@@ -8,6 +7,7 @@ import utils.com_excel.wrap
 from utils import hoffix, functions
 
 from packets.calls import constants
+from packets.calls import functions as call_functions
 
 
 def send_request(api: hoffix.HoffixAPI, data: dict[str, any]) -> Optional[dict[str, any]]:
@@ -26,14 +26,14 @@ def send_request(api: hoffix.HoffixAPI, data: dict[str, any]) -> Optional[dict[s
     return api.get_full_order_data(order_id)
 
 
-def write_to_excel(sourceWorkbook: str, sourceSheet: str, columns: dict[str, int], data: list[dict[str, any]]) -> None:
+def open_excel(sourceWorkbook: str, sourceSheet: str, columns: dict[str, int]) -> utils.com_excel.wrap.Sheet:
     excel = win32com.client.Dispatch("Excel.Application")
     excel.Visible = True
 
     wb = excel.Workbooks.Open(sourceWorkbook)
 
     sheet = wb.Worksheets(sourceSheet)
-    sh = utils.com_excel.wrap.Sheet(
+    return utils.com_excel.wrap.Sheet(
         [
             utils.com_excel.wrap.Column(column=functions.convert_index_to_column(index), rename=column_name)
             for column_name, index in columns.items()
@@ -41,68 +41,37 @@ def write_to_excel(sourceWorkbook: str, sourceSheet: str, columns: dict[str, int
         sheet,
     )
 
-    for row in data:
-        sh.write(
-            row['row'],
-            [row]
-        )
-
 
 def collect_calls(order_data: dict[str, any]) -> list[dict[str, any]]:
     return order_data.get('callInfo', [])
 
 
-def group_objects(object_array: list[dict[str, any]], field: str, function_list: list[Callable[[any], bool]]) -> list[list[dict[str, any]]]:
-    groups = [[] for _ in range(len(function_list) + 1)]
+def group_objects(object_array: list[dict[str, any]], functions_data: dict[str, tuple[Callable, str]]) -> dict[str, list[any]]:
+    groups = {
+        key: []
+        for key in functions_data.keys()
+    }
 
     for item in object_array:
-        value = item.get(field)
+        for key, func_data in functions_data.items():
+            function, field = func_data
+            value = item.get(field)
 
-        if value is None:
-            continue
-
-        for index, function in enumerate(function_list):
-            f = function(value)
-            print(f, item)
-            if f:
-                groups[index].append(item)
+            if value is None:
                 break
-        else:
-            groups[-1].append(item)
+
+            if function(value):
+                groups[key].append(item)
 
     return groups
 
 
-def is_same_date(compare_to_date: datetime.datetime) -> Callable[[datetime.datetime], bool]:
-    date = compare_to_date.date()
-
-    def compare(value: any) -> bool:
-        if isinstance(value, datetime.datetime):
-            value = value.date()
-        elif isinstance(value, datetime.date):
-            pass
-        elif isinstance(value, str):
-            value = datetime.datetime.strptime(value, constants.DATETIME_FORMAT)
-        else:
-            raise Exception(f"Unknown date type: {type(value)}")
-        return date == value
-
-    return compare
-
-
-def is_not_same_date(compare_to_date: datetime.datetime) -> Callable[[datetime.datetime], bool]:
-    func = is_same_date(compare_to_date)
-    def compare(value: any) -> bool:
-        return not func(value)
-    return compare
-
-
 def string_format_call(call: dict[str, any]) -> str:
-    start_time = call.get('callStartDT')
+    start_time = call.get(constants.CALL_START_FIELD)
     if start_time is None:
         raise Exception("start time is None")
 
-    end_time = call.get('callEndDT')
+    end_time = call.get(constants.CALL_END_FIELD)
     if end_time is None:
         raise Exception("end time is None")
 
@@ -116,46 +85,38 @@ def string_format_call(call: dict[str, any]) -> str:
     hours, minutes, second = utils.functions.convert_seconds_to_time(int(delta.total_seconds()))
     delta_format = "{hours:2d}:{minutes:2d}:{seconds:2d}"
     delta_str = f"Длительность: {delta_format.format(hours=hours, minutes=minutes, seconds=second).replace(' ', '0')}"
+
     return f"{state} | {start_time.strftime(constants.DATE_FORMAT)} {start_end_str} {delta_str}"
 
 
-def string_format_calls(calls: list[dict[str, any]]) -> str:
-    call_strings = []
-    for index, call in enumerate(calls):
-        call_strings.append(f"{index + 1}) {string_format_call(call)}")
-
-    return "\n".join(call_strings)
+def unite_group(group: list[dict[str, any]]) -> str:
+    return "\n".join([f"{index + 1}) {string_format_call(item)}" for index, item in enumerate(group)])
 
 
-def parse_row(api: hoffix.HoffixAPI, row: dict[str, any]) -> dict[str, any]:
+def parse_excel_row(api: hoffix.HoffixAPI, row: dict[str, any]) -> Optional[dict[str, any]]:
     order = send_request(api, row)
     if order is None:
-        return {}
-    print(json.dumps(order))
+        return None
+
     calls = collect_calls(order)
 
-    date = order.get("workDate")
-    if date is None:
-        raise Exception
-    date = datetime.datetime.strptime(date, "%Y-%m-%d")
+    grouped_calls = group_objects(calls, {key: (function[0](order, function[1]), function[2]) for key, function in call_functions.FUNCTIONS.items()})
+    grouped_calls_string: dict[str, str] = {}
+    for group, calls in grouped_calls.items():
+        grouped_calls_string[group] = unite_group(calls)
 
-    try:
-        same_date_call_group, ungrouped = group_objects(calls, "callStartDT", [is_same_date(date)])
-    except Exception as e:
-        print(order)
-        raise e
-
-    print("same date:")
-    print(string_format_calls(same_date_call_group))
-    print('---\nother:')
-    print(string_format_calls(ungrouped))
-
-    return {}
+    return grouped_calls_string
 
 
 def main(excel_json: dict[str, any]):
     api = hoffix.HoffixAPI(excel_json['auth']['login'], excel_json['auth']['password'])
 
+    sheet = open_excel(excel_json['ExcelData']['sourceWorkbook'], excel_json['ExcelData']['sourceSheet'], excel_json['ExcelData']['columns'])
+
     for excel_row in excel_json["orders"]:
-        parse_row(api, excel_row)
+        parsed_row = parse_excel_row(api, excel_row)
+        if parsed_row is None:
+            continue
+
+        sheet.write(excel_row['excelRow'], parsed_row)
 
