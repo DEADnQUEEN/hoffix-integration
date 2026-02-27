@@ -36,7 +36,7 @@ def is_not_same_date(order: dict[str, any], field: str) -> Callable[[any], bool]
 
 
 FUNCTIONS: dict[str, tuple[Callable[[dict[str, any], Callable[[any], bool]]], str, str]] = {
-    "callPrevdayCol": (is_same_date, "workDate", constants.CALL_START_FIELD),
-    "callSamedayCol": (is_not_same_date, "workDate", constants.CALL_START_FIELD),
+    "callSamedayCol": (is_same_date, "workDate", constants.CALL_START_FIELD),
+    "callPrevdayCol": (is_not_same_date, "workDate", constants.CALL_START_FIELD),
 }
 
